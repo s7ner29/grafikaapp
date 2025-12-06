@@ -697,72 +697,75 @@ namespace kursovaya
             {
                 var ctrl = FindControlRecursive(this, "dataGridView1");
                 if (!(ctrl is DataGridView dgv)) return;
-                if (dgv.DataSource is not DataTable dt) { MessageBox.Show(this, "Нет данных для сохранения.", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
-
-                var changes = dt.GetChanges();
-                if (changes == null)
+                if (dgv.DataSource is not DataTable dt)
                 {
-                    // рассмотрим отдельно фото текущего выбранного ученика
-                    var curId = GetSelectedIdFromGrid(dgv, "STUDENT_ID");
-                    if (curId != null && pictureBox1.Image != null)
-                    {
-                        var blob = DbProcedures.ImageToBlob(pictureBox1.Image);
-                        if (blob != null)
-                            DbProcedures.UpdateStudentPhoto(_dbPath, curId.Value, blob);
-                    }
-                    MessageBox.Show(this, "Изменений нет.", "Готово", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show(this, "Нет данных для сохранения.", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
 
-                foreach (DataRow row in changes.Rows)
-                {
-                    if (row.RowState == DataRowState.Modified)
-                    {
-                        int studentId = Convert.ToInt32(row["STUDENT_ID"]);
-                        string last = Convert.ToString(row["LASTNAME"]) ?? string.Empty;
-                        string first = Convert.ToString(row["FIRSTNAME"]) ?? string.Empty;
-                        string? middle = row.Table.Columns.Contains("MIDDLENAME") && row["MIDDLENAME"] != DBNull.Value ? Convert.ToString(row["MIDDLENAME"]) : null;
-                        char gender = 'M';
-                        if (row.Table.Columns.Contains("GENDER") && row["GENDER"] != DBNull.Value)
-                        {
-                            var g = Convert.ToString(row["GENDER"]) ?? string.Empty;
-                            if (!string.IsNullOrEmpty(g)) gender = g[0];
-                        }
-                        DateTime? birth = null;
-                        if (row.Table.Columns.Contains("BIRTHDATE") && row["BIRTHDATE"] != DBNull.Value)
-                            birth = Convert.ToDateTime(row["BIRTHDATE"]);
-                        int yearAdmission = row.Table.Columns.Contains("YEAR_ADMISSION") && row["YEAR_ADMISSION"] != DBNull.Value ? Convert.ToInt32(row["YEAR_ADMISSION"]) : DateTime.Now.Year;
-                        int classId = 0;
-                        // В GET_STUDENTS_WITH_CLASS возвращается CLASS_NAME, а не CLASS_ID. Если CLASS_ID отсутствует, пропускаем изменение class.
-                        if (row.Table.Columns.Contains("CLASS_ID") && row["CLASS_ID"] != DBNull.Value)
-                            classId = Convert.ToInt32(row["CLASS_ID"]);
-                        else
-                        {
-                            // попытка получить CLASS_ID по CLASS_NAME из базы
-                            if (row.Table.Columns.Contains("CLASS_NAME") && row["CLASS_NAME"] != DBNull.Value)
-                            {
-                                var className = Convert.ToString(row["CLASS_NAME"]);
-                                var dtClass = global::kursovaya.FirebirdDb.ExecuteQuery(_dbPath, "SELECT CLASS_ID FROM CLASSES WHERE CLASS_NAME = @P_CLASS_NAME",
-                                    new FbParameter("P_CLASS_NAME", FbDbType.VarChar) { Value = className });
-                                if (dtClass.Rows.Count > 0) classId = Convert.ToInt32(dtClass.Rows[0]["CLASS_ID"]);
-                            }
-                        }
-                        string? phone = row.Table.Columns.Contains("PHONE") && row["PHONE"] != DBNull.Value ? Convert.ToString(row["PHONE"]) : null;
-                        string? email = row.Table.Columns.Contains("EMAIL") && row["EMAIL"] != DBNull.Value ? Convert.ToString(row["EMAIL"]) : null;
+                var changes = dt.GetChanges();
+                var anySaved = false;
 
-                        // last and first are non-nullable for DbProcedures.UpdateStudent
-                        DbProcedures.UpdateStudent(_dbPath, studentId, last ?? string.Empty, first ?? string.Empty, middle, gender, birth, yearAdmission, classId, phone, email);
+                if (changes != null)
+                {
+                    foreach (DataRow row in changes.Rows)
+                    {
+                        if (row.RowState == DataRowState.Modified)
+                        {
+                            int studentId = Convert.ToInt32(row["STUDENT_ID"]);
+                            string last = Convert.ToString(row["LASTNAME"]) ?? string.Empty;
+                            string first = Convert.ToString(row["FIRSTNAME"]) ?? string.Empty;
+                            string? middle = row.Table.Columns.Contains("MIDDLENAME") && row["MIDDLENAME"] != DBNull.Value ? Convert.ToString(row["MIDDLENAME"]) : null;
+                            char gender = 'M';
+                            if (row.Table.Columns.Contains("GENDER") && row["GENDER"] != DBNull.Value)
+                            {
+                                var g = Convert.ToString(row["GENDER"]) ?? string.Empty;
+                                if (!string.IsNullOrEmpty(g)) gender = g[0];
+                            }
+                            DateTime? birth = null;
+                            if (row.Table.Columns.Contains("BIRTHDATE") && row["BIRTHDATE"] != DBNull.Value)
+                                birth = Convert.ToDateTime(row["BIRTHDATE"]);
+                            int yearAdmission = row.Table.Columns.Contains("YEAR_ADMISSION") && row["YEAR_ADMISSION"] != DBNull.Value ? Convert.ToInt32(row["YEAR_ADMISSION"]) : DateTime.Now.Year;
+                            int classId = 0;
+                            // В GET_STUDENTS_WITH_CLASS возвращается CLASS_NAME, а не CLASS_ID. Если CLASS_ID отсутствует, попытаемся получить по имени.
+                            if (row.Table.Columns.Contains("CLASS_ID") && row["CLASS_ID"] != DBNull.Value)
+                                classId = Convert.ToInt32(row["CLASS_ID"]);
+                            else
+                            {
+                                if (row.Table.Columns.Contains("CLASS_NAME") && row["CLASS_NAME"] != DBNull.Value)
+                                {
+                                    var className = Convert.ToString(row["CLASS_NAME"]);
+                                    var dtClass = global::kursovaya.FirebirdDb.ExecuteQuery(_dbPath, "SELECT CLASS_ID FROM CLASSES WHERE CLASS_NAME = @P_CLASS_NAME",
+                                        new FbParameter("P_CLASS_NAME", FbDbType.VarChar) { Value = className });
+                                    if (dtClass.Rows.Count > 0) classId = Convert.ToInt32(dtClass.Rows[0]["CLASS_ID"]);
+                                }
+                            }
+                            string? phone = row.Table.Columns.Contains("PHONE") && row["PHONE"] != DBNull.Value ? Convert.ToString(row["PHONE"]) : null;
+                            string? email = row.Table.Columns.Contains("EMAIL") && row["EMAIL"] != DBNull.Value ? Convert.ToString(row["EMAIL"]) : null;
+
+                            // Выполняем обновление
+                            DbProcedures.UpdateStudent(_dbPath, studentId, last ?? string.Empty, first ?? string.Empty, middle, gender, birth, yearAdmission, classId, phone, email);
+                            anySaved = true;
+                        }
                     }
-                    // можно обрабатывать добавления/удаления отдельно
                 }
 
-                // Фото выбранного студента
+                // Фото выбранного студента — сохраняем независимо от изменений в DataTable
                 var selId = GetSelectedIdFromGrid(dgv, "STUDENT_ID");
                 if (selId != null && pictureBox1.Image != null)
                 {
                     var blob = DbProcedures.ImageToBlob(pictureBox1.Image);
                     if (blob != null)
+                    {
                         DbProcedures.UpdateStudentPhoto(_dbPath, selId.Value, blob);
+                        anySaved = true;
+                    }
+                }
+
+                if (!anySaved)
+                {
+                    MessageBox.Show(this, "Изменений нет.", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
                 }
 
                 LoadStudentsToGrid();

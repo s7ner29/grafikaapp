@@ -746,7 +746,129 @@ namespace kursovaya
             OpenSortDialogForGrid(ctrl);
         }
 
-        private void button24_Click(object? sender, EventArgs e) { } // сохранить
+        private void button24_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                var ctrl = FindControlRecursive(this, "dataGridView3");
+                if (!(ctrl is DataGridView dgv)) return;
+                if (dgv.DataSource is not DataTable dt)
+                {
+                    MessageBox.Show(this, "Нет данных для сохранения.", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                var changes = dt.GetChanges();
+                var anySaved = false;
+
+                if (changes != null)
+                {
+                    foreach (DataRow row in changes.Rows)
+                    {
+                        if (row.RowState != DataRowState.Modified) continue;
+
+                        string? studentFull = row.Table.Columns.Contains("STUDENT_FULLNAME") && row["STUDENT_FULLNAME"] != DBNull.Value
+                            ? Convert.ToString(row["STUDENT_FULLNAME"])
+                            : null;
+                        string? subjectName = row.Table.Columns.Contains("SUBJECT_NAME") && row["SUBJECT_NAME"] != DBNull.Value
+                            ? Convert.ToString(row["SUBJECT_NAME"])
+                            : null;
+                        DateTime? lessonDate = row.Table.Columns.Contains("LESSON_DATE") && row["LESSON_DATE"] != DBNull.Value
+                            ? (DateTime?)Convert.ToDateTime(row["LESSON_DATE"])
+                            : null;
+
+                        // возможно пользователь изменил оценку или статус присутствия
+                        int? gradeVal = row.Table.Columns.Contains("GRADE") && row["GRADE"] != DBNull.Value
+                            ? (int?)Convert.ToInt32(row["GRADE"])
+                            : null;
+                        string? presenceStatus = row.Table.Columns.Contains("PRESENCE_STATUS") && row["PRESENCE_STATUS"] != DBNull.Value
+                            ? Convert.ToString(row["PRESENCE_STATUS"])
+                            : null;
+
+                        if (string.IsNullOrWhiteSpace(studentFull) || string.IsNullOrWhiteSpace(subjectName) || lessonDate == null)
+                            continue;
+
+                        // Найдём student_id
+                        var dtStudent = FirebirdDb.ExecuteQuery(_dbPath,
+                            "SELECT STUDENT_ID FROM STUDENTS WHERE TRIM(LASTNAME || ' ' || FIRSTNAME) = @FULL OR TRIM(LASTNAME || ' ' || FIRSTNAME || ' ' || COALESCE(MIDDLENAME,'')) = @FULL",
+                            new FbParameter("FULL", FbDbType.VarChar) { Value = studentFull.Trim() });
+                        if (dtStudent.Rows.Count == 0) continue;
+                        int studentId = Convert.ToInt32(dtStudent.Rows[0]["STUDENT_ID"]);
+
+                        // Найдём subject_id
+                        var dtSub = FirebirdDb.ExecuteQuery(_dbPath, "SELECT SUBJECT_ID FROM SUBJECTS WHERE NAME = @NAME",
+                            new FbParameter("NAME", FbDbType.VarChar) { Value = subjectName.Trim() });
+                        if (dtSub.Rows.Count == 0) continue;
+                        int subjectId = Convert.ToInt32(dtSub.Rows[0]["SUBJECT_ID"]);
+
+                        var dateOnly = lessonDate.Value.Date;
+
+                        // Обновление/добавление оценки
+                        if (gradeVal != null)
+                        {
+                            var dtG = FirebirdDb.ExecuteQuery(_dbPath,
+                                @"SELECT GRADE_ID FROM GRADES g
+                          WHERE g.STUDENT_ID = @SID AND g.SUBJECT_ID = @SUB AND g.GRADE_DATE = @GDATE",
+                                new FbParameter("SID", FbDbType.Integer) { Value = studentId },
+                                new FbParameter("SUB", FbDbType.Integer) { Value = subjectId },
+                                new FbParameter("GDATE", FbDbType.Date) { Value = dateOnly });
+
+                            if (dtG.Rows.Count > 0)
+                            {
+                                int gradeId = Convert.ToInt32(dtG.Rows[0]["GRADE_ID"]);
+                                DbProcedures.UpdateGrade(_dbPath, gradeId, gradeVal.Value, dateOnly);
+                                anySaved = true;
+                            }
+                            else
+                            {
+                                // если записи оценки нет — создадим новую
+                                DbProcedures.AddGrade(_dbPath, studentId, subjectId, gradeVal.Value, dateOnly);
+                                anySaved = true;
+                            }
+                        }
+
+                        // Обновление/добавление посещаемости (presence)
+                        if (!string.IsNullOrWhiteSpace(presenceStatus))
+                        {
+                            var presChar = presenceStatus.Trim()[0];
+
+                            var dtA = FirebirdDb.ExecuteQuery(_dbPath,
+                                @"SELECT ATTENDANCE_ID FROM ATTENDANCES a
+                          WHERE a.STUDENT_ID = @SID AND a.SUBJECT_ID = @SUB AND a.LESSON_DATE = @LDATE",
+                                new FbParameter("SID", FbDbType.Integer) { Value = studentId },
+                                new FbParameter("SUB", FbDbType.Integer) { Value = subjectId },
+                                new FbParameter("LDATE", FbDbType.Date) { Value = dateOnly });
+
+                            if (dtA.Rows.Count > 0)
+                            {
+                                int attId = Convert.ToInt32(dtA.Rows[0]["ATTENDANCE_ID"]);
+                                DbProcedures.UpdateAttendance(_dbPath, attId, presChar, dateOnly);
+                                anySaved = true;
+                            }
+                            else
+                            {
+                                // если записи посещаемости нет — создадим новую
+                                DbProcedures.AddAttendance(_dbPath, studentId, subjectId, dateOnly, presChar);
+                                anySaved = true;
+                            }
+                        }
+                    }
+                }
+
+                if (!anySaved)
+                {
+                    MessageBox.Show(this, "Изменений нет.", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                LoadFullJournalToGrid();
+                MessageBox.Show(this, "Журнал сохранён.", "Готово", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Ошибка при сохранении журнала:\n{ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
 
         private void button23_Click(object? sender, EventArgs e) { } // изменить
 
