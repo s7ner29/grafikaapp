@@ -78,10 +78,57 @@ namespace kursovaya
 
         // ---------------------- Поиск / фильтрация ----------------------
 
+        // Показать простой диалог для выбора колонки поиска.
+        // Возвращает internal column name (DataGridViewColumn.Name) или null = "все колонки".
+        private string? ShowSearchColumnDialog(DataGridView dgv)
+        {
+            using var dlg = new Form
+            {
+                Text = "Выберите поле для поиска",
+                StartPosition = FormStartPosition.CenterParent,
+                Width = 420,
+                Height = 140,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MinimizeBox = false,
+                MaximizeBox = false
+            };
+
+            var cb = new ComboBox { Dock = DockStyle.Top, DropDownStyle = ComboBoxStyle.DropDownList };
+            // Добавляем вариант "Все поля"
+            cb.Items.Add(new Tuple<string?, string>(null, "(Все поля)"));
+
+            // Используем видимые колонки грида (порядок DisplayIndex)
+            foreach (DataGridViewColumn col in dgv.Columns.Cast<DataGridViewColumn>().OrderBy(c => c.DisplayIndex))
+            {
+                // отображаем HeaderText, сохраняем Name
+                cb.Items.Add(new Tuple<string?, string>(col.Name, string.IsNullOrEmpty(col.HeaderText) ? col.Name : col.HeaderText));
+            }
+
+            cb.DisplayMember = "Item2";
+            cb.ValueMember = "Item1";
+            if (cb.Items.Count > 0) cb.SelectedIndex = 0;
+
+            var pnl = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 44, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(6) };
+            var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Width = 100 };
+            var cancel = new Button { Text = "Отмена", DialogResult = DialogResult.Cancel, Width = 100 };
+            pnl.Controls.Add(ok); pnl.Controls.Add(cancel);
+
+            dlg.Controls.Add(cb);
+            dlg.Controls.Add(pnl);
+            dlg.AcceptButton = ok;
+            dlg.CancelButton = cancel;
+
+            if (dlg.ShowDialog(this) != DialogResult.OK) return null;
+
+            if (cb.SelectedItem is Tuple<string?, string> tup) return tup.Item1;
+            return null;
+        }
+
         // Фильтрует содержимое DataGridView по строке поиска.
+        // Если указана columnName — фильтрация применяется только к этой колонке (по internal Name).
         // Для DataTable использует RowFilter (эффективно и сохраняет источник данных),
         // в противном случае скрывает строки, не соответствующие запросу.
-        private void FilterGridByText(DataGridView? dgv, string? rawQuery)
+        private void FilterGridByText(DataGridView? dgv, string? rawQuery, string? columnName = null)
         {
             if (dgv == null) return;
 
@@ -110,7 +157,56 @@ namespace kursovaya
             {
                 try
                 {
-                    // выбираем текстовые колонки
+                    if (!string.IsNullOrEmpty(columnName) && table.Columns.Contains(columnName))
+                    {
+                        var col = table.Columns[columnName];
+                        if (col != null)
+                        {
+                            // Строковый столбец
+                            if (col.DataType == typeof(string))
+                            {
+                                var colFilter = $"[{EscapeColumnName(col.ColumnName)}] LIKE '%{s}%'";
+
+                                table.DefaultView.RowFilter = colFilter;
+                            }
+                            else if (col.DataType == typeof(char) || col.DataType == typeof(char?))
+                            {
+                                // если введена единственная буква — делаем точное сравнение (учёт регистра снижен)
+                                if (query.Length == 1)
+                                    table.DefaultView.RowFilter = $"UPPER([{EscapeColumnName(col.ColumnName)}]) = '{query.ToUpperInvariant()}'";
+                                else
+                                    table.DefaultView.RowFilter = $"[{EscapeColumnName(col.ColumnName)}] LIKE '%{s}%'";
+                            }
+                            else if (IsNumericType(col.DataType))
+                            {
+                                // пытаемся распарсить число
+                                if (decimal.TryParse(query, out var num))
+                                {
+                                    table.DefaultView.RowFilter = $"[{EscapeColumnName(col.ColumnName)}] = {num}";
+                                }
+                                else
+                                {
+                                    // fallback — сравнивать как строку
+                                    table.DefaultView.RowFilter = $"CONVERT([{EscapeColumnName(col.ColumnName)}], 'System.String') LIKE '%{s}%'";
+                                }
+                            }
+                            else if (col.DataType == typeof(DateTime) || col.DataType == typeof(DateTime?))
+                            {
+                                if (DateTime.TryParse(query, out var d))
+                                {
+                                    table.DefaultView.RowFilter = $"[{EscapeColumnName(col.ColumnName)}] = '{d:yyyy-MM-dd}'";
+                                }
+                                else
+                                    table.DefaultView.RowFilter = $"CONVERT([{EscapeColumnName(col.ColumnName)}], 'System.String') LIKE '%{s}%'";
+
+                            }
+
+                            dgv.ClearSelection();
+                            return;
+                        }
+                    }
+
+                    // Если columnName не указан или не найден — поведение как раньше: по всем строковым колонкам
                     var textCols = table.Columns.Cast<DataColumn>().Where(c => c.DataType == typeof(string)).Select(c => c.ColumnName).ToArray();
 
                     string[] parts;
@@ -120,7 +216,6 @@ namespace kursovaya
                     }
                     else
                     {
-                        // если нет строковых колонок — применять CONVERT ко всем колонкам
                         var allCols = table.Columns.Cast<DataColumn>().Select(c => c.ColumnName).ToArray();
                         parts = allCols.Select(c => $"CONVERT([{EscapeColumnName(c)}], 'System.String') LIKE '%{s}%'").ToArray();
                     }
@@ -135,17 +230,31 @@ namespace kursovaya
                     foreach (DataGridViewRow r in dgv.Rows)
                     {
                         bool matched = false;
-                        foreach (DataGridViewCell cell in r.Cells)
+                        if (!string.IsNullOrEmpty(columnName))
                         {
-                            try
+                            // ищем колонку в DataGridView
+                            var gridCol = dgv.Columns.Cast<DataGridViewColumn>().FirstOrDefault(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
+                            if (gridCol != null)
                             {
-                                var v = cell.Value;
-                                if (v != null && v != DBNull.Value)
-                                {
-                                    if (Convert.ToString(v)!.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) { matched = true; break; }
-                                }
+                                var cellVal = r.Cells[gridCol.Index]?.Value;
+                                if (cellVal != null && cellVal != DBNull.Value && Convert.ToString(cellVal)!.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+                                    matched = true;
                             }
-                            catch { /* ignore cell */ }
+                        }
+                        else
+                        {
+                            foreach (DataGridViewCell cell in r.Cells)
+                            {
+                                try
+                                {
+                                    var v = cell.Value;
+                                    if (v != null && v != DBNull.Value)
+                                    {
+                                        if (Convert.ToString(v)!.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) { matched = true; break; }
+                                    }
+                                }
+                                catch { /* ignore cell */ }
+                            }
                         }
                         r.Visible = matched;
                     }
@@ -153,21 +262,36 @@ namespace kursovaya
             }
             else
             {
-                // Фильтруем вручную по видимым колонкам/ячейкам
+                // Фильтруем вручную по указанной колонке или по всем видимым колонкам/ячейкам
                 foreach (DataGridViewRow r in dgv.Rows)
                 {
                     if (r.IsNewRow) { r.Visible = false; continue; }
                     bool matched = false;
-                    foreach (DataGridViewCell cell in r.Cells)
+
+                    if (!string.IsNullOrEmpty(columnName))
                     {
-                        try
+                        var gridCol = dgv.Columns.Cast<DataGridViewColumn>().FirstOrDefault(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
+                        if (gridCol != null)
                         {
-                            var v = cell.Value;
-                            if (v == null || v == DBNull.Value) continue;
-                            if (Convert.ToString(v)!.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) { matched = true; break; }
+                            var val = r.Cells[gridCol.Index]?.Value;
+                            if (val != null && val != DBNull.Value && Convert.ToString(val)!.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+                                matched = true;
                         }
-                        catch { /* ignore cell */ }
                     }
+                    else
+                    {
+                        foreach (DataGridViewCell cell in r.Cells)
+                        {
+                            try
+                            {
+                                var v = cell.Value;
+                                if (v == null || v == DBNull.Value) continue;
+                                if (Convert.ToString(v)!.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) { matched = true; break; }
+                            }
+                            catch { /* ignore cell */ }
+                        }
+                    }
+
                     r.Visible = matched;
                 }
             }
@@ -176,10 +300,18 @@ namespace kursovaya
             try { if (dgv.CurrentCell != null) dgv.CurrentCell = null; } catch { }
         }
 
+        private static bool IsNumericType(Type t)
+        {
+            var nt = Nullable.GetUnderlyingType(t) ?? t;
+            return nt == typeof(byte) || nt == typeof(sbyte) || nt == typeof(short) || nt == typeof(ushort) ||
+                   nt == typeof(int) || nt == typeof(uint) || nt == typeof(long) || nt == typeof(ulong) ||
+                   nt == typeof(float) || nt == typeof(double) || nt == typeof(decimal);
+        }
+
         private static string EscapeColumnName(string name)
         {
             // В DataView RowFilter имена колонок в квадратных скобках; удваиваем закрывающую скобку внутри имени
-            return name?.Replace("]", "]]") ?? name;
+            return (name ?? string.Empty).Replace("]", "]]");
         }
 
         // ---------------------- TabPage1 (ученики) ----------------------
@@ -192,15 +324,15 @@ namespace kursovaya
         private void button8_Click(object? sender, EventArgs e)
         {
             var dgv = FindControlRecursive(this, "dataGridView1") as DataGridView;
-            FilterGridByText(dgv, textBox1?.Text);
+            if (dgv == null) return;
+            var column = ShowSearchColumnDialog(dgv);
+            FilterGridByText(dgv, textBox1?.Text, column);
         }
 
         // Поиск по вводу — можно выполнять и на ввод (необязательно)
         private void textBox1_TextChanged(object? sender, EventArgs e)
         {
-            // не активируем автопоиск — пользователь предпочёл кнопку "поиск".
-            // Если нужно — раскомментируйте следующую строку:
-            // FilterGridByText(FindControlRecursive(this, "dataGridView1") as DataGridView, textBox1?.Text);
+            // автопоиск отключён — используйте кнопку "поиск".
         }
 
         // Обновить — загружает исходную таблицу "ученики", очищая текущее содержимое грида
@@ -280,7 +412,9 @@ namespace kursovaya
         private void button18_Click(object? sender, EventArgs e)
         {
             var dgv = FindControlRecursive(this, "dataGridView2") as DataGridView;
-            FilterGridByText(dgv, textBox2?.Text);
+            if (dgv == null) return;
+            var column = ShowSearchColumnDialog(dgv);
+            FilterGridByText(dgv, textBox2?.Text, column);
         }
 
         private void textBox2_TextChanged(object? sender, EventArgs e)
@@ -382,7 +516,9 @@ namespace kursovaya
         private void button28_Click(object? sender, EventArgs e)
         {
             var dgv = FindControlRecursive(this, "dataGridView3") as DataGridView;
-            FilterGridByText(dgv, textBox3?.Text);
+            if (dgv == null) return;
+            var column = ShowSearchColumnDialog(dgv);
+            FilterGridByText(dgv, textBox3?.Text, column);
         }
 
         private void textBox3_TextChanged(object? sender, EventArgs e) { }
@@ -452,7 +588,9 @@ namespace kursovaya
         private void button38_Click(object? sender, EventArgs e)
         {
             var dgv = FindControlRecursive(this, "dataGridView4") as DataGridView;
-            FilterGridByText(dgv, textBox4?.Text);
+            if (dgv == null) return;
+            var column = ShowSearchColumnDialog(dgv);
+            FilterGridByText(dgv, textBox4?.Text, column);
         }
 
         private void textBox4_TextChanged(object? sender, EventArgs e) { }
@@ -501,7 +639,9 @@ namespace kursovaya
         private void button48_Click(object? sender, EventArgs e)
         {
             var dgv = FindControlRecursive(this, "dataGridView5") as DataGridView;
-            FilterGridByText(dgv, textBox5?.Text);
+            if (dgv == null) return;
+            var column = ShowSearchColumnDialog(dgv);
+            FilterGridByText(dgv, textBox5?.Text, column);
         }
 
         private void textBox5_TextChanged(object? sender, EventArgs e) { }
@@ -572,7 +712,9 @@ namespace kursovaya
         private void button58_Click(object? sender, EventArgs e)
         {
             var dgv = FindControlRecursive(this, "dataGridView6") as DataGridView;
-            FilterGridByText(dgv, textBox6?.Text);
+            if (dgv == null) return;
+            var column = ShowSearchColumnDialog(dgv);
+            FilterGridByText(dgv, textBox6?.Text, column);
         }
 
         private void textBox6_TextChanged(object? sender, EventArgs e) { }
@@ -693,7 +835,7 @@ namespace kursovaya
         }
 
         // кнопка сохранения классов реализована в Form1.cs (button53_Click)
-       
+
 
         private void button52_Click(object? sender, EventArgs e) // сортировать (классы)
         {
