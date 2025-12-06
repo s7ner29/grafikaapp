@@ -675,10 +675,7 @@ namespace kursovaya
             resultForm.ShowDialog(this);
         }
 
-        private void pictureBox1_Click(object sender, EventArgs e)
-        {
-
-        }
+      
 
         private void button1_Click(object sender, EventArgs e) // добавить ученика
         {
@@ -905,9 +902,15 @@ namespace kursovaya
             {
                 var ctrl = FindControlRecursive(this, "dataGridView5");
                 if (!(ctrl is DataGridView dgv)) return;
-                if (dgv.DataSource is not DataTable dt) { MessageBox.Show(this, "Нет данных для сохранения.", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
+                if (dgv.DataSource is not DataTable dt)
+                {
+                    MessageBox.Show(this, "Нет данных для сохранения.", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
 
                 var changes = dt.GetChanges();
+                var anySaved = false;
+
                 if (changes != null)
                 {
                     foreach (DataRow row in changes.Rows)
@@ -949,6 +952,7 @@ namespace kursovaya
                             string? desc = row.Table.Columns.Contains("DESCRIPTION") && row["DESCRIPTION"] != DBNull.Value ? Convert.ToString(row["DESCRIPTION"]) : null;
 
                             DbProcedures.UpdateAchievement(_dbPath, achievementId, titleNew, eventDate, level, desc);
+                            anySaved = true;
                         }
                     }
                 }
@@ -985,9 +989,18 @@ namespace kursovaya
                         {
                             var blob = DbProcedures.ImageToBlob(pictureBox3.Image);
                             if (blob != null)
+                            {
                                 DbProcedures.UpdateAchievementPhoto(_dbPath, achievementId, blob);
+                                anySaved = true;
+                            }
                         }
                     }
+                }
+
+                if (!anySaved)
+                {
+                    MessageBox.Show(this, "Изменений нет.", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
                 }
 
                 LoadAchievementsToGrid();
@@ -1530,10 +1543,7 @@ namespace kursovaya
             }
         }
 
-        private void pictureBox2_Click(object sender, EventArgs e)
-        {
-
-        }
+     
 
         // Добавлены вспомогательные методы для получения ID и выбора записи из таблицы
         private int? GetSelectedIdFromGrid(DataGridView dgv, string idColumnName)

@@ -1,9 +1,11 @@
 using System;
 using System.Data;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Windows.Forms;
+using FirebirdSql.Data.FirebirdClient;
 
 namespace kursovaya
 {
@@ -11,6 +13,8 @@ namespace kursovaya
     // на которые ссылается Form1.Designer.cs.
     public partial class Form1
     {
+        private bool _isConnected = false;
+
         // ---------------------- Утилиты ----------------------
 
         // Экспортирует именно то, что видно в DataGridView (порядок/фильтрация/видимые строки)
@@ -73,6 +77,66 @@ namespace kursovaya
             catch (Exception ex)
             {
                 MessageBox.Show(this, $"Ошибка открытия окна сортировки:\n{ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        // ---------------------- Вспомогательные для загрузки фото ----------------------
+
+        // Загружает изображение из файла в независимый Bitmap (чтобы не блокировать файл)
+        private Image? LoadImageFromFile(string filePath)
+        {
+            try
+            {
+                var bytes = File.ReadAllBytes(filePath);
+                using var ms = new MemoryStream(bytes);
+                using var img = Image.FromStream(ms);
+                return new Bitmap(img); // копия независимая от потока
+            }
+            catch
+            {
+                return null;
+            }
+        }   
+
+        // Открывает диалог выбора изображения и устанавливает его в PictureBox (освобождает предыдущий)
+        private void SelectImageForPictureBox(PictureBox pb)
+        {
+            if (pb == null) return;
+
+            using var ofd = new OpenFileDialog
+            {
+                Filter = "Изображения (*.png;*.jpg;*.jpeg;*.bmp;*.gif)|*.png;*.jpg;*.jpeg;*.bmp;*.gif|Все файлы (*.*)|*.*",
+                Title = "Выберите изображение"
+            };
+
+            if (ofd.ShowDialog(this) != DialogResult.OK) return;
+
+            var img = LoadImageFromFile(ofd.FileName);
+            if (img == null)
+            {
+                MessageBox.Show(this, "Невозможно загрузить изображение.", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            // Заменяем изображение, освобождая предыдущий ресурс
+            try
+            {
+                var prev = pb.Image;
+                pb.Image = img;
+                prev?.Dispose();
+            }
+            catch
+            {
+                // на случай ошибок управления ресурсами — попытаться безопасно присвоить
+                try
+                {
+                    pb.Image = img;
+                }
+                catch
+                {
+                    img.Dispose();
+                    MessageBox.Show(this, "Не удалось установить изображение в элемент.", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
             }
         }
 
@@ -166,12 +230,10 @@ namespace kursovaya
                             if (col.DataType == typeof(string))
                             {
                                 var colFilter = $"[{EscapeColumnName(col.ColumnName)}] LIKE '%{s}%'";
-
                                 table.DefaultView.RowFilter = colFilter;
                             }
                             else if (col.DataType == typeof(char) || col.DataType == typeof(char?))
                             {
-                                // если введена единственная буква — делаем точное сравнение (учёт регистра снижен)
                                 if (query.Length == 1)
                                     table.DefaultView.RowFilter = $"UPPER([{EscapeColumnName(col.ColumnName)}]) = '{query.ToUpperInvariant()}'";
                                 else
@@ -179,14 +241,12 @@ namespace kursovaya
                             }
                             else if (IsNumericType(col.DataType))
                             {
-                                // пытаемся распарсить число
                                 if (decimal.TryParse(query, out var num))
                                 {
                                     table.DefaultView.RowFilter = $"[{EscapeColumnName(col.ColumnName)}] = {num}";
                                 }
                                 else
                                 {
-                                    // fallback — сравнивать как строку
                                     table.DefaultView.RowFilter = $"CONVERT([{EscapeColumnName(col.ColumnName)}], 'System.String') LIKE '%{s}%'";
                                 }
                             }
@@ -198,7 +258,10 @@ namespace kursovaya
                                 }
                                 else
                                     table.DefaultView.RowFilter = $"CONVERT([{EscapeColumnName(col.ColumnName)}], 'System.String') LIKE '%{s}%'";
-
+                            }
+                            else
+                            {
+                                table.DefaultView.RowFilter = $"CONVERT([{EscapeColumnName(col.ColumnName)}], 'System.String') LIKE '%{s}%'";
                             }
 
                             dgv.ClearSelection();
@@ -206,7 +269,6 @@ namespace kursovaya
                         }
                     }
 
-                    // Если columnName не указан или не найден — поведение как раньше: по всем строковым колонкам
                     var textCols = table.Columns.Cast<DataColumn>().Where(c => c.DataType == typeof(string)).Select(c => c.ColumnName).ToArray();
 
                     string[] parts;
@@ -232,7 +294,6 @@ namespace kursovaya
                         bool matched = false;
                         if (!string.IsNullOrEmpty(columnName))
                         {
-                            // ищем колонку в DataGridView
                             var gridCol = dgv.Columns.Cast<DataGridViewColumn>().FirstOrDefault(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
                             if (gridCol != null)
                             {
@@ -262,7 +323,7 @@ namespace kursovaya
             }
             else
             {
-                // Фильтруем вручную по указанной колонке или по всем видимым колонкам/ячейкам
+                // Фильтруем вручную по указанной колонке или по всем видимым колонках/ячейках
                 foreach (DataGridViewRow r in dgv.Rows)
                 {
                     if (r.IsNewRow) { r.Visible = false; continue; }
@@ -314,11 +375,115 @@ namespace kursovaya
             return (name ?? string.Empty).Replace("]", "]]");
         }
 
+        // ---------------------- Helpers для подключения/отключения ----------------------
+
+        // Загружает все таблицы сразу
+        private void LoadAllTables()
+        {
+            try
+            {
+                LoadStudentsToGrid();
+                LoadTeachersToGrid();
+                LoadFullJournalToGrid();
+                LoadCurriculumToGrid();
+                LoadAchievementsToGrid();
+                LoadClassDetailsToGrid();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Ошибка при загрузке таблиц:\n{ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        // Универсальная попытка подключения и вызов загрузки всех таблиц (если loadAction == null — грузим все)
+        private void TryConnectAndLoad(Action? loadAction = null)
+        {
+            try
+            {
+                using var conn = global::kursovaya.FirebirdDb.CreateConnection(_dbPath);
+                conn.Open();
+                try
+                {
+                    FirebirdDb.EnsureAutoddl(conn);
+                }
+                catch { /* ignore */ }
+
+                _isConnected = true;
+                MessageBox.Show(this, "Подключение к базе данных успешно.", "Подключено", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                if (loadAction != null)
+                    loadAction();
+                else
+                    LoadAllTables();
+            }
+            catch (Exception ex)
+            {
+                _isConnected = false;
+                MessageBox.Show(this, $"Ошибка подключения к базе данных:\n{ex.Message}", "Ошибка подключения", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        // Очистить все DataGridView и pictureBox'ы — используется при полном отключении
+        private void DisconnectAll()
+        {
+            // Список имён DataGridView
+            var dgvNames = new[] { "dataGridView1", "dataGridView2", "dataGridView3", "dataGridView4", "dataGridView5", "dataGridView6" };
+            foreach (var name in dgvNames)
+            {
+                try
+                {
+                    var ctrl = FindControlRecursive(this, name) as DataGridView;
+                    if (ctrl != null)
+                    {
+                        ctrl.DataSource = null;
+                        ctrl.Columns.Clear();
+                    }
+                }
+                catch { /* ignore individual failures */ }
+            }
+
+            // Очистить pictureBox'ы
+            var pictureBoxes = new[] { pictureBox1, pictureBox2, pictureBox3 };
+            foreach (var pb in pictureBoxes)
+            {
+                if (pb == null) continue;
+                try
+                {
+                    var prev = pb.Image;
+                    pb.Image = null;
+                    prev?.Dispose();
+                }
+                catch { /* ignore */ }
+            }
+
+            _isConnected = false;
+        }
+
+        // Универсальное отключение — подтверждение и очистка всего UI, если подтверждено
+        private void DisconnectAndClear(string? dgvName = null, PictureBox? pb = null)
+        {
+            // уточнённый текст подтверждения
+            var msg = "Вы уверены, что хотите отключиться от базы данных? Все представления данных будут очищены.";
+            if (MessageBox.Show(this, msg, "Подтверждение отключения", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                return;
+
+            // Если указан конкретный dgvName/пикчер — всё равно очищаем всю программу, чтобы не осталось "подключённых" вкладок
+            DisconnectAll();
+
+            MessageBox.Show(this, "Отключено. Все таблицы очищены.", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
         // ---------------------- TabPage1 (ученики) ----------------------
 
-        private void button10_Click(object? sender, EventArgs e) { } // подключиться (оставлено пустым)
+        private void button10_Click(object? sender, EventArgs e) // подключиться (ученики)
+        {
+            TryConnectAndLoad();
+        }
 
-        private void button9_Click(object? sender, EventArgs e) { } // отключиться (оставлено пустым)
+        private void button9_Click(object? sender, EventArgs e) // отключиться (ученики)
+        {
+            DisconnectAndClear();
+        }
 
         // Поиск — ученики (кнопка)
         private void button8_Click(object? sender, EventArgs e)
@@ -333,6 +498,12 @@ namespace kursovaya
         private void textBox1_TextChanged(object? sender, EventArgs e)
         {
             // автопоиск отключён — используйте кнопку "поиск".
+        }
+
+        // Обработчик клика по фото ученика — загрузка изображения
+        private void pictureBox1_Click(object? sender, EventArgs e)
+        {
+            SelectImageForPictureBox(pictureBox1);
         }
 
         // Обновить — загружает исходную таблицу "ученики", очищая текущее содержимое грида
@@ -400,13 +571,26 @@ namespace kursovaya
             }
         }
 
+        // Обработчик клика по ячейке грида учеников (пустой — совпадает со стилем остальных обработчиков)
         private void dataGridView1_CellContentClick(object? sender, DataGridViewCellEventArgs e) { }
 
         // ---------------------- TabPage2 (учителя) ----------------------
 
-        private void button20_Click(object? sender, EventArgs e) { } // подключиться
+        private void button20_Click(object? sender, EventArgs e) // подключиться (учителя)
+        {
+            TryConnectAndLoad();
+        }
 
-        private void button19_Click(object? sender, EventArgs e) { } // отключиться
+        private void button19_Click(object? sender, EventArgs e) // отключиться (учителя)
+        {
+            DisconnectAndClear();
+        }
+
+        // Обработчик клика по фото учителя — загрузка изображения
+        private void pictureBox2_Click(object? sender, EventArgs e)
+        {
+            SelectImageForPictureBox(pictureBox2);
+        }
 
         // Поиск — учителя (кнопка)
         private void button18_Click(object? sender, EventArgs e)
@@ -448,7 +632,8 @@ namespace kursovaya
             }
         }
 
-        private void button15_Click(object? sender, EventArgs e) // сортировать (учителя)
+        // Сортировать (учителя)
+        private void button15_Click(object? sender, EventArgs e)
         {
             var ctrl = FindControlRecursive(this, "dataGridView2") as DataGridView;
             OpenSortDialogForGrid(ctrl);
@@ -508,9 +693,15 @@ namespace kursovaya
 
         // ---------------------- TabPage3 (журнал) ----------------------
 
-        private void button30_Click(object? sender, EventArgs e) { } // подключиться
+        private void button30_Click(object? sender, EventArgs e) // подключиться (журнал)
+        {
+            TryConnectAndLoad();
+        }
 
-        private void button29_Click(object? sender, EventArgs e) { } // отключиться
+        private void button29_Click(object? sender, EventArgs e) // отключиться (журнал)
+        {
+            DisconnectAndClear();
+        }
 
         // Поиск — журнал (кнопка)
         private void button28_Click(object? sender, EventArgs e)
@@ -580,9 +771,15 @@ namespace kursovaya
 
         // ---------------------- TabPage4 (учебный план) ----------------------
 
-        private void button40_Click(object? sender, EventArgs e) { } // подключиться
+        private void button40_Click(object? sender, EventArgs e) // подключиться (учебный план)
+        {
+            TryConnectAndLoad();
+        }
 
-        private void button39_Click(object? sender, EventArgs e) { } // отключиться
+        private void button39_Click(object? sender, EventArgs e) // отключиться (учебный план)
+        {
+            DisconnectAndClear();
+        }
 
         // Поиск — учебный план (кнопка)
         private void button38_Click(object? sender, EventArgs e)
@@ -631,9 +828,15 @@ namespace kursovaya
 
         // ---------------------- TabPage5 (достижения) ----------------------
 
-        private void button50_Click(object? sender, EventArgs e) { } // подключиться
+        private void button50_Click(object? sender, EventArgs e) // подключиться (достижения)
+        {
+            TryConnectAndLoad();
+        }
 
-        private void button49_Click(object? sender, EventArgs e) { } // отключиться
+        private void button49_Click(object? sender, EventArgs e) // отключиться (достижения)
+        {
+            DisconnectAndClear();
+        }
 
         // Поиск — достижения (кнопка)
         private void button48_Click(object? sender, EventArgs e)
@@ -698,15 +901,25 @@ namespace kursovaya
             }
         }
 
-        private void pictureBox3_Click(object? sender, EventArgs e) { }
+        // Реализован выбор фото для вкладки "достижения"
+        private void pictureBox3_Click(object? sender, EventArgs e)
+        {
+            SelectImageForPictureBox(pictureBox3);
+        }
 
         private void dataGridView5_CellContentClick(object? sender, DataGridViewCellEventArgs e) { }
 
         // ---------------------- TabPage6 (классы) ----------------------
 
-        private void button60_Click(object? sender, EventArgs e) { } // подключиться
+        private void button60_Click(object? sender, EventArgs e) // подключиться (классы)
+        {
+            TryConnectAndLoad();
+        }
 
-        private void button59_Click(object? sender, EventArgs e) { } // отключиться
+        private void button59_Click(object? sender, EventArgs e) // отключиться (классы)
+        {
+            DisconnectAndClear();
+        }
 
         // Поиск — классы (кнопка)
         private void button58_Click(object? sender, EventArgs e)
