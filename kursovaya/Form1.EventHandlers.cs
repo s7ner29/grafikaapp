@@ -76,15 +76,132 @@ namespace kursovaya
             }
         }
 
+        // ---------------------- Поиск / фильтрация ----------------------
+
+        // Фильтрует содержимое DataGridView по строке поиска.
+        // Для DataTable использует RowFilter (эффективно и сохраняет источник данных),
+        // в противном случае скрывает строки, не соответствующие запросу.
+        private void FilterGridByText(DataGridView? dgv, string? rawQuery)
+        {
+            if (dgv == null) return;
+
+            var query = (rawQuery ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(query))
+            {
+                // Очистка фильтра / восстановление всех строк
+                if (dgv.DataSource is DataTable dt)
+                {
+                    try { dt.DefaultView.RowFilter = string.Empty; }
+                    catch { /* ignore */ }
+                }
+                else
+                {
+                    foreach (DataGridViewRow r in dgv.Rows) r.Visible = true;
+                }
+                dgv.ClearSelection();
+                try { if (dgv.CurrentCell != null) dgv.CurrentCell = null; } catch { }
+                return;
+            }
+
+            // Безопасное значение для LIKE в выражении RowFilter
+            var s = query.Replace("'", "''");
+
+            if (dgv.DataSource is DataTable table)
+            {
+                try
+                {
+                    // выбираем текстовые колонки
+                    var textCols = table.Columns.Cast<DataColumn>().Where(c => c.DataType == typeof(string)).Select(c => c.ColumnName).ToArray();
+
+                    string[] parts;
+                    if (textCols.Length > 0)
+                    {
+                        parts = textCols.Select(c => $"[{EscapeColumnName(c)}] LIKE '%{s}%'").ToArray();
+                    }
+                    else
+                    {
+                        // если нет строковых колонок — применять CONVERT ко всем колонкам
+                        var allCols = table.Columns.Cast<DataColumn>().Select(c => c.ColumnName).ToArray();
+                        parts = allCols.Select(c => $"CONVERT([{EscapeColumnName(c)}], 'System.String') LIKE '%{s}%'").ToArray();
+                    }
+
+                    var filter = string.Join(" OR ", parts);
+                    table.DefaultView.RowFilter = filter;
+                    dgv.ClearSelection();
+                }
+                catch (Exception)
+                {
+                    // при ошибке безопасно откатиться к построчной фильтрации
+                    foreach (DataGridViewRow r in dgv.Rows)
+                    {
+                        bool matched = false;
+                        foreach (DataGridViewCell cell in r.Cells)
+                        {
+                            try
+                            {
+                                var v = cell.Value;
+                                if (v != null && v != DBNull.Value)
+                                {
+                                    if (Convert.ToString(v)!.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) { matched = true; break; }
+                                }
+                            }
+                            catch { /* ignore cell */ }
+                        }
+                        r.Visible = matched;
+                    }
+                }
+            }
+            else
+            {
+                // Фильтруем вручную по видимым колонкам/ячейкам
+                foreach (DataGridViewRow r in dgv.Rows)
+                {
+                    if (r.IsNewRow) { r.Visible = false; continue; }
+                    bool matched = false;
+                    foreach (DataGridViewCell cell in r.Cells)
+                    {
+                        try
+                        {
+                            var v = cell.Value;
+                            if (v == null || v == DBNull.Value) continue;
+                            if (Convert.ToString(v)!.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) { matched = true; break; }
+                        }
+                        catch { /* ignore cell */ }
+                    }
+                    r.Visible = matched;
+                }
+            }
+
+            dgv.ClearSelection();
+            try { if (dgv.CurrentCell != null) dgv.CurrentCell = null; } catch { }
+        }
+
+        private static string EscapeColumnName(string name)
+        {
+            // В DataView RowFilter имена колонок в квадратных скобках; удваиваем закрывающую скобку внутри имени
+            return name?.Replace("]", "]]") ?? name;
+        }
+
         // ---------------------- TabPage1 (ученики) ----------------------
 
         private void button10_Click(object? sender, EventArgs e) { } // подключиться (оставлено пустым)
 
         private void button9_Click(object? sender, EventArgs e) { } // отключиться (оставлено пустым)
 
-        private void button8_Click(object? sender, EventArgs e) { } // поиск (оставлено пустым)
+        // Поиск — ученики (кнопка)
+        private void button8_Click(object? sender, EventArgs e)
+        {
+            var dgv = FindControlRecursive(this, "dataGridView1") as DataGridView;
+            FilterGridByText(dgv, textBox1?.Text);
+        }
 
-        private void textBox1_TextChanged(object? sender, EventArgs e) { } // поиск по тексту (оставлено пустым)
+        // Поиск по вводу — можно выполнять и на ввод (необязательно)
+        private void textBox1_TextChanged(object? sender, EventArgs e)
+        {
+            // не активируем автопоиск — пользователь предпочёл кнопку "поиск".
+            // Если нужно — раскомментируйте следующую строку:
+            // FilterGridByText(FindControlRecursive(this, "dataGridView1") as DataGridView, textBox1?.Text);
+        }
 
         // Обновить — загружает исходную таблицу "ученики", очищая текущее содержимое грида
         private void button7_Click(object? sender, EventArgs e)
@@ -159,9 +276,17 @@ namespace kursovaya
 
         private void button19_Click(object? sender, EventArgs e) { } // отключиться
 
-        private void button18_Click(object? sender, EventArgs e) { } // поиск
+        // Поиск — учителя (кнопка)
+        private void button18_Click(object? sender, EventArgs e)
+        {
+            var dgv = FindControlRecursive(this, "dataGridView2") as DataGridView;
+            FilterGridByText(dgv, textBox2?.Text);
+        }
 
-        private void textBox2_TextChanged(object? sender, EventArgs e) { }
+        private void textBox2_TextChanged(object? sender, EventArgs e)
+        {
+            // автопоиск отключён по умолчанию
+        }
 
         private void button17_Click(object? sender, EventArgs e) // сохранить в CSV (учителя)
         {
@@ -253,9 +378,14 @@ namespace kursovaya
 
         private void button29_Click(object? sender, EventArgs e) { } // отключиться
 
-        private void textBox3_TextChanged(object? sender, EventArgs e) { }
+        // Поиск — журнал (кнопка)
+        private void button28_Click(object? sender, EventArgs e)
+        {
+            var dgv = FindControlRecursive(this, "dataGridView3") as DataGridView;
+            FilterGridByText(dgv, textBox3?.Text);
+        }
 
-        private void button28_Click(object? sender, EventArgs e) { } // поиск
+        private void textBox3_TextChanged(object? sender, EventArgs e) { }
 
         private void button27_Click(object? sender, EventArgs e) // сохранить в CSV (журнал)
         {
@@ -318,7 +448,12 @@ namespace kursovaya
 
         private void button39_Click(object? sender, EventArgs e) { } // отключиться
 
-        private void button38_Click(object? sender, EventArgs e) { } // поиск
+        // Поиск — учебный план (кнопка)
+        private void button38_Click(object? sender, EventArgs e)
+        {
+            var dgv = FindControlRecursive(this, "dataGridView4") as DataGridView;
+            FilterGridByText(dgv, textBox4?.Text);
+        }
 
         private void textBox4_TextChanged(object? sender, EventArgs e) { }
 
@@ -362,7 +497,12 @@ namespace kursovaya
 
         private void button49_Click(object? sender, EventArgs e) { } // отключиться
 
-        private void button48_Click(object? sender, EventArgs e) { } // поиск
+        // Поиск — достижения (кнопка)
+        private void button48_Click(object? sender, EventArgs e)
+        {
+            var dgv = FindControlRecursive(this, "dataGridView5") as DataGridView;
+            FilterGridByText(dgv, textBox5?.Text);
+        }
 
         private void textBox5_TextChanged(object? sender, EventArgs e) { }
 
@@ -428,7 +568,12 @@ namespace kursovaya
 
         private void button59_Click(object? sender, EventArgs e) { } // отключиться
 
-        private void button58_Click(object? sender, EventArgs e) { } // поиск
+        // Поиск — классы (кнопка)
+        private void button58_Click(object? sender, EventArgs e)
+        {
+            var dgv = FindControlRecursive(this, "dataGridView6") as DataGridView;
+            FilterGridByText(dgv, textBox6?.Text);
+        }
 
         private void textBox6_TextChanged(object? sender, EventArgs e) { }
 
