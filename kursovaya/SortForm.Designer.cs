@@ -151,7 +151,7 @@
             cbSortColumn.FormattingEnabled = true;
             cbSortColumn.Location = new Point(12, 448);
             cbSortColumn.Name = "cbSortColumn";
-            cbSortColumn.Size = new Size(420, 23);
+            cbSortColumn.Size = new Size(482, 23);
             cbSortColumn.TabIndex = 10;
             cbSortColumn.SelectedIndexChanged += cbSortColumn_SelectedIndexChanged;
             // 
@@ -160,9 +160,9 @@
             cbSortDir.DropDownStyle = ComboBoxStyle.DropDownList;
             cbSortDir.FormattingEnabled = true;
             cbSortDir.Items.AddRange(new object[] { "ASC, DESC" });
-            cbSortDir.Location = new Point(440, 448);
+            cbSortDir.Location = new Point(500, 448);
             cbSortDir.Name = "cbSortDir";
-            cbSortDir.Size = new Size(180, 23);
+            cbSortDir.Size = new Size(120, 23);
             cbSortDir.TabIndex = 0;
             cbSortDir.SelectedIndexChanged += cbSortDir_SelectedIndexChanged;
             // 
@@ -205,11 +205,12 @@
             Controls.Add(btnLoadRelations);
             Controls.Add(clbTables);
             Controls.Add(lblTables);
+            FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
             MinimizeBox = false;
             Name = "SortForm";
             StartPosition = FormStartPosition.CenterParent;
-            Text = "SortForm";
+            Text = "Сортировка";
             Load += SortForm_Load;
             ResumeLayout(false);
             PerformLayout();

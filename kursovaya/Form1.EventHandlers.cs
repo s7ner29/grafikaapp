@@ -833,7 +833,7 @@ namespace kursovaya
                             var presChar = presenceStatus.Trim()[0];
 
                             var dtA = FirebirdDb.ExecuteQuery(_dbPath,
-                                @"SELECT ATTENDANCE_ID FROM ATTENDANCES a
+                                @"SELECT ATTENDANCE_ID FROM ATTENDANCE a
                           WHERE a.STUDENT_ID = @SID AND a.SUBJECT_ID = @SUB AND a.LESSON_DATE = @LDATE",
                                 new FbParameter("SID", FbDbType.Integer) { Value = studentId },
                                 new FbParameter("SUB", FbDbType.Integer) { Value = subjectId },

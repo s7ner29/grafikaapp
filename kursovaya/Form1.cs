@@ -52,6 +52,7 @@ namespace kursovaya
                 LoadCurriculumToGrid(); // добавлено: загрузка учебного плана в dataGridView4
                 LoadAchievementsToGrid(); // теперь загружаем процедуру деталей достижений
                 LoadClassDetailsToGrid(); // загрузка данных о классах
+                ApplyRolePermissions();
             }
             catch (FbException fbEx)
             {
@@ -1813,6 +1814,104 @@ namespace kursovaya
             if (cellBack2 == Color.Empty) cellBack2 = SystemColors.Window;
             dgv.DefaultCellStyle.SelectionBackColor = cellBack2;
             dgv.DefaultCellStyle.SelectionForeColor = dgv.DefaultCellStyle.ForeColor;
+        }
+
+        /// <summary>
+        /// Применяю права доступа для текущего пользователя (AppSession.CurrentUserRole).
+        /// Admin — полный доступ.
+        /// Teacher — только изменение журнала (dataGridView3) и достижений (dataGridView5).
+        /// Остальные вкладки только для чтения.
+        /// </summary>
+        private void ApplyRolePermissions()
+        {
+            var role = (AppSession.CurrentUserRole ?? string.Empty).Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(role) || string.Equals(role, "admin", StringComparison.OrdinalIgnoreCase))
+            {
+                // админ — ничего не блокируем
+                return;
+            }
+
+            if (string.Equals(role, "teacher", StringComparison.OrdinalIgnoreCase))
+            {
+                // Делаю все основные грида только для чтения по умолчанию
+                var gridNames = new[] { "dataGridView1", "dataGridView2", "dataGridView3", "dataGridView4", "dataGridView5", "dataGridView6" };
+                foreach (var name in gridNames)
+                {
+                    var ctrl = FindControlRecursive(this, name) as DataGridView;
+                    if (ctrl == null) continue;
+
+                    // Разрешаем редактирование только для журнала (3) и достижений (5)
+                    if (string.Equals(name, "dataGridView3", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(name, "dataGridView5", StringComparison.OrdinalIgnoreCase))
+                    {
+                        ctrl.ReadOnly = false;
+                        ctrl.AllowUserToAddRows = true;
+                        ctrl.AllowUserToDeleteRows = true;
+                    }
+                    else
+                    {
+                        ctrl.ReadOnly = true;
+                        ctrl.AllowUserToAddRows = false;
+                        ctrl.AllowUserToDeleteRows = false;
+                    }
+                }
+
+                // Отключаю кнопки добавления/сохранения/удаления для прочих вкладок (ученик/учитель/учебный план/классы)
+                var disableButtonNames = new[]
+                {
+                    // студенты
+                    "button1", /* добавить ученика */ "button3", /* сохранить */ "button4", /* удалить */
+                    // учителя
+                    "button11", /* добавить */ "button13", /* сохранить */ "button14", /* удалить */
+                    // учебный план
+                    "button34", /* сохранить */ 
+                    // классы
+                    "button55", /* добавить класс */ "button53", /* сохранить назначения */
+                    // общий: кнопки, которые меняют фото учеников/учителей
+                    "pictureBox1", "pictureBox2"
+                };
+
+                foreach (var bname in disableButtonNames)
+                {
+                    var c = FindControlRecursive(this, bname);
+                    if (c != null) c.Enabled = false;
+                }
+
+                // Разрешаю кнопки работы с журналом/оценками/достижениями
+                var enableButtonNames = new[]
+                {
+                    "button21", // добавить оценку (журнал)
+                    "button24", // сохранить журнал
+                    "button41", // добавить достижение
+                    "button43"  // сохранить достижения
+                };
+
+                foreach (var bname in enableButtonNames)
+                {
+                    var c = FindControlRecursive(this, bname);
+                    if (c != null) c.Enabled = true;
+                }
+
+                // Отключаю возможность редактирования курса/классов через контекстное меню и т.п. (при наличии)
+                // Оставляю операции просмотра, сортировки и экспорта доступными
+                var noDisable = new[] { "button5", "button15", "button25", "button35", "button45", "button52" }; // сортировка
+                foreach (var n in noDisable)
+                {
+                    var c = FindControlRecursive(this, n);
+                    if (c != null) c.Enabled = true;
+                }
+
+                // Убедиться, что загрузка картинок достижений доступна (pictureBox3), а для студентов/учителей — нет
+                var pb3 = FindControlRecursive(this, "pictureBox3") as PictureBox;
+                if (pb3 != null) pb3.Enabled = true;
+                var pb1 = FindControlRecursive(this, "pictureBox1") as PictureBox;
+                if (pb1 != null) pb1.Enabled = false;
+                var pb2 = FindControlRecursive(this, "pictureBox2") as PictureBox;
+                if (pb2 != null) pb2.Enabled = false;
+
+                // При желании — показать роль в заголовке окна
+                try { this.Text = $"Дневник — {AppSession.CurrentUsername} ({AppSession.CurrentUserRole})"; } catch { /* ignore */ }
+            }
         }
     }
 }

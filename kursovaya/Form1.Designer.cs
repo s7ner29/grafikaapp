@@ -888,8 +888,9 @@
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(1171, 681);
             Controls.Add(tabControl1);
+            FormBorderStyle = FormBorderStyle.FixedSingle;
             Name = "Form1";
-            Text = "Form1";
+            Text = "АИС школы";
             Load += Form1_Load;
             tabControl1.ResumeLayout(false);
             tabPage1.ResumeLayout(false);
