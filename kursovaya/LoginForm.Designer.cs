@@ -61,7 +61,7 @@
             // 
             tbUsername.Location = new Point(0, 20);
             tbUsername.Name = "tbUsername";
-            tbUsername.Size = new Size(178, 23);
+            tbUsername.Size = new Size(455, 23);
             tbUsername.TabIndex = 2;
             tbUsername.TextChanged += tbUsername_TextChanged;
             // 
@@ -69,14 +69,14 @@
             // 
             tbPassword.Location = new Point(0, 64);
             tbPassword.Name = "tbPassword";
-            tbPassword.Size = new Size(178, 23);
+            tbPassword.Size = new Size(455, 23);
             tbPassword.TabIndex = 3;
             tbPassword.UseSystemPasswordChar = true;
             tbPassword.TextChanged += tbPassword_TextChanged;
             // 
             // btnLogin
             // 
-            btnLogin.Location = new Point(221, 20);
+            btnLogin.Location = new Point(120, 117);
             btnLogin.Name = "btnLogin";
             btnLogin.Size = new Size(75, 23);
             btnLogin.TabIndex = 4;
@@ -86,7 +86,7 @@
             // 
             // btnCancel
             // 
-            btnCancel.Location = new Point(221, 63);
+            btnCancel.Location = new Point(201, 117);
             btnCancel.Name = "btnCancel";
             btnCancel.Size = new Size(75, 23);
             btnCancel.TabIndex = 5;
@@ -98,7 +98,7 @@
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
-            ClientSize = new Size(303, 89);
+            ClientSize = new Size(467, 198);
             Controls.Add(btnCancel);
             Controls.Add(btnLogin);
             Controls.Add(tbPassword);

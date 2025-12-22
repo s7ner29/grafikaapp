@@ -98,7 +98,7 @@ namespace kursovaya
             }
         }   
 
-        // Открывает диалог выбора изображения и устанавливает его в PictureBox (освобождает предыдущий)
+        // Открывает диалог выбора изображения и устанавливает его в PictureBox (освобождая предыдущий)
         private void SelectImageForPictureBox(PictureBox pb)
         {
             if (pb == null) return;
@@ -139,6 +139,53 @@ namespace kursovaya
                 }
             }
         }
+
+        private void button24_Click(object? sender, EventArgs e)
+        {
+            // Проверяю наличие грида и данных — затем вызываю обновление представления.
+            try
+            {
+                var ctrl = FindControlRecursive(this, "dataGridView3") as DataGridView;
+                if (ctrl == null)
+                {
+                    MessageBox.Show(this, "Грид журнала не найден.", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                if (ctrl.DataSource is not DataTable dt)
+                {
+                    MessageBox.Show(this, "Нет данных для сохранения.", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                var changes = dt.GetChanges();
+                if (changes == null)
+                {
+                    MessageBox.Show(this, "Изменений нет.", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                // FIXME: временная заглушка — здесь должна быть логика сохранения изменений в базе.
+                // При необходимости перенести полную реализацию из другого файла.
+                MessageBox.Show(this, "Сохранение журнала: функциональность временно отключена (заглушка).", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                // Обновляю представление после "сохранения"
+                LoadFullJournalToGrid();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Ошибка при сохранении журнала:\n{ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        // Сортировать журнал (кнопка "сортировать" на вкладке Журнал)
+        private void button25_Click(object? sender, EventArgs e)
+        {
+            // Открыть окно сортировки для dataGridView3
+            var ctrl = FindControlRecursive(this, "dataGridView3") as DataGridView;
+            OpenSortDialogForGrid(ctrl);
+        }
+
 
         // ---------------------- Поиск / фильтрация ----------------------
 
@@ -415,6 +462,10 @@ namespace kursovaya
                     loadAction();
                 else
                     LoadAllTables();
+
+                // Применяю права доступа в зависимости от текущей роли после успешного подключения/загрузки данных.
+                // Обновляю UI чтобы при повторном входе под другим пользователем элементы стали соответствовать роли.
+                ApplyRolePermissions();
             }
             catch (Exception ex)
             {
@@ -462,15 +513,34 @@ namespace kursovaya
         // Универсальное отключение — подтверждение и очистка всего UI, если подтверждено
         private void DisconnectAndClear(string? dgvName = null, PictureBox? pb = null)
         {
-            // уточнённый текст подтверждения
+            // Подтверждаю действие отключения
             var msg = "Вы уверены, что хотите отключиться от базы данных? Все представления данных будут очищены.";
             if (MessageBox.Show(this, msg, "Подтверждение отключения", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
                 return;
 
-            // Если указан конкретный dgvName/пикчер — всё равно очищаем всю программу, чтобы не осталось "подключённых" вкладок
+            // Очищаю все представления и ресурсы
             DisconnectAll();
 
-            MessageBox.Show(this, "Отключено. Все таблицы очищены.", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            // Сбрасываю данные сессии — пользователь вышел
+            AppSession.CurrentUsername = string.Empty;
+            AppSession.CurrentUserRole = string.Empty;
+
+            // Предлагаю повторный вход. Если пользователь успешно вошёл — загружаю данные.
+            // В противном случае закрываю главное окно (завершаю приложение).
+            using var login = new LoginForm();
+            var res = login.ShowDialog(this);
+            if (res == DialogResult.OK)
+            {
+                // При успешном входе LoginForm уже заполнил AppSession.
+                TryConnectAndLoad();
+                MessageBox.Show(this, "Вход выполнен. Данные загружены.", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            else
+            {
+                // Если пользователь не вошёл — закрыть приложение
+                MessageBox.Show(this, "Вход не выполнен. Приложение будет закрыто.", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                Close();
+            }
         }
 
         // ---------------------- TabPage1 (ученики) ----------------------
@@ -722,31 +792,6 @@ namespace kursovaya
 
         // Обновить — загружает исходный журнал (GET_FULL_JOURNAL)
         private void button26_Click(object? sender, EventArgs e)
-        {
-            try
-            {
-                var ctrl = FindControlRecursive(this, "dataGridView3") as DataGridView;
-                if (ctrl != null)
-                {
-                    ctrl.DataSource = null;
-                    ctrl.Columns.Clear();
-                }
-
-                LoadFullJournalToGrid();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(this, $"Ошибка обновления журнала:\n{ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-        }
-
-        private void button25_Click(object? sender, EventArgs e) // сортировать (журнал)
-        {
-            var ctrl = FindControlRecursive(this, "dataGridView3") as DataGridView;
-            OpenSortDialogForGrid(ctrl);
-        }
-
-        private void button24_Click(object sender, EventArgs e)
         {
             try
             {
